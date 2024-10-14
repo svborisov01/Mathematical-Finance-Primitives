@@ -114,3 +114,51 @@ def geometric_brownian_motion(initial = 100, drift = 0.1, diffusion = 0.2, T = 1
 
     return paths
 
+def multivariate_geometric_brownian_motion(initial = np.array([100, 100]), drift = np.array([0.1, 0.1]), diffusion = np.array([[0.2, 0.05], [0.05, 0.2]]), T = 1, sim_num = 100, visualize_single_trajectory = False, visualize_single_asset = False):
+    """
+    Generates N-dimensional Geometric Brownian Motion
+
+    Inputs:
+    - initial: initial values of the process (spot prices)
+    - drift: array of drift coefficients (mu) in annual terms
+    - diffusion: covariance matrix (sigma) in annual terms
+    - T: time in years. The function simulates round(T * 252) + 1 steps
+    - sim_num: number of paths to generate
+    - visualize_single_trajectory: generate one path for all assets in the basket - for visual debugging only
+    - visualize_single_asset: generate all paths, but for one asset from the basket - for visual debugging only
+
+    Ouputs:
+    - paths: 3D array of paths of the simulation with dimensions (round(T * 252) + 1, sim_num, n_assets)
+    - (optional) plot of the paths
+
+    Notes:
+    - the simulation is round(T * 252) + 1 in length to account for initial value
+    - always check that initial values array, drift array and covariance matrix have the same dimensions!
+    - use paths[i, :, :] to choose one time
+    - use paths[:, i, :] to choose one path
+    - use paths[:, :, i] to choose one asset
+    """
+
+    n_assets = len(drift)
+
+    increments = st.multivariate_normal.rvs(mean = drift / 252, cov = diffusion / np.sqrt(252), size = (round(T * 252) + 1, sim_num))
+    increments[0, :, :] = np.zeros([sim_num, n_assets])
+    paths = initial * np.exp(increments.cumsum(axis = 0))
+
+    if visualize_single_trajectory == True:
+        plt.figure(figsize = (10, 6), dpi = 150)
+        plt.plot(paths[:, 0, :])
+        plt.title('All assets in the first generated path')
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.show()
+
+    if visualize_single_trajectory == True:
+        plt.figure(figsize = (10, 6), dpi = 150)
+        plt.plot(paths[:, :, 0])
+        plt.title('All paths for the first asset')
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.show()
+
+    return paths
