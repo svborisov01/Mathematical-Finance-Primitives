@@ -162,3 +162,42 @@ def multivariate_geometric_brownian_motion(initial = np.array([100, 100]), drift
         plt.show()
 
     return paths
+
+def ornstein_uhlenbeck_process(initial = 0, long_term = 0, diffusion = 10, mean_reversion_coef = 1, T = 1, sim_num = 100, visualize = False):
+    """
+    Generates a 1D algebraic brownian motion
+
+    Inputs:
+    - initial: initial value of the brownian motion. Default is 0.
+    - long-term: the value to which the process reverts. Default is 0.
+    - diffusion: diffusion coefficient (sigma) in annual terms. Default is 10.
+    - mean_reversion_coef: how quickly the process reverts to the long-term mean. Default is 1.
+    - T: time in years. Default is 1. To get the number of steps, multiply T by 252.
+    - sim_num: number of simulations to run. Default is 100.
+    - visualize: whether to plot the paths. Default is False.
+
+    Ouputs:
+    - paths: 2D array of paths of the simulation with dimensions (round(T * 252) + 1, sim_num).
+    - (optional) plot of the paths.
+
+    Notes:
+    - the simulation is (round(T * 252) + 1) in length to account for the initial value.
+    - to select a single path, use algebraic_brownian_motion(...)[:, i]
+    - to select a single point in time across paths, use algebraic_brownian_motion(...)[i, :]
+    """
+
+    increments = st.norm.rvs(loc = (mean_reversion_coef * long_term) / 252, scale = diffusion / np.sqrt(252), size = (round(T * 252) + 1, sim_num))
+    paths = np.zeros((round(T * 252) + 1, sim_num))
+    paths[0, :] = initial
+    for i in range(1, round(T * 252) + 1):
+        paths[i, :] = paths[i-1, :] + increments[i, :] - mean_reversion_coef * paths[i-1, :] / 252
+
+    if visualize == True:
+        plt.figure(figsize = (10, 6), dpi = 150)
+        plt.plot(paths)
+        plt.title('Algebraic Brownian Motion')
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.show()
+
+    return paths
