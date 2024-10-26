@@ -165,7 +165,7 @@ def multivariate_geometric_brownian_motion(initial = np.array([100, 100]), drift
 
 def ornstein_uhlenbeck_process(initial = 0, long_term = 0, diffusion = 10, mean_reversion_coef = 1, T = 1, sim_num = 100, visualize = False):
     """
-    Generates a 1D algebraic brownian motion
+    Generates a 1D Orstein-Uhlenbeck process
 
     Inputs:
     - initial: initial value of the brownian motion. Default is 0.
