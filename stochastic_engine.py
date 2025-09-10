@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from jax.scipy.stats import norm
+from jax.scipy.linalg import cholesky
 
 import matplotlib.pyplot as plt
 import scipy.stats as st
@@ -139,3 +140,20 @@ def validate_generation(paths):
     plt.title('Cross-dimensions check')
     plt.show()
     print(paths[0, :, 0].mean(), paths[0, :, 0].std())
+
+def correlate_noise(uncorrelated_array, correlation_matrix):
+    """
+    Apply correlation using batched matrix multiplication for better performance.
+    """
+    # Validate and compute Cholesky decomposition
+    steps, sim_dim, sim_num = uncorrelated_array.shape
+    
+    if correlation_matrix.shape != (sim_dim, sim_dim):
+        raise ValueError("correlation_matrix dimensions must match sim_dim")
+    
+    L = cholesky(correlation_matrix, lower=True)
+    
+    # Use einsum for efficient batched matrix multiplication
+    correlated = jnp.einsum('ilk,lj->ijk', uncorrelated_array, L.T)
+    
+    return correlated
