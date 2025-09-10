@@ -157,3 +157,8 @@ def correlate_noise(uncorrelated_array, correlation_matrix):
     correlated = jnp.einsum('ilk,lj->ijk', uncorrelated_array, L.T)
     
     return correlated
+
+def validate_correlating():
+    paths = generate_uncorrelated_white_noise(1000, 3, 10)
+    correlation_matrix = jnp.array([[1, 0.9, 0.7], [0.9, 1, 0.3], [0.1, 0.5, 1.]])
+    jnp.corrcoef(correlate_noise(paths, correlation_matrix=correlation_matrix)[:, :, 0].T)
