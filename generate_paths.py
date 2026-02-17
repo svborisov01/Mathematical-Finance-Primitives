@@ -3,44 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy.stats as st
+import stochastic_engine as se
+import jax.numpy as jnp
 
 sns.set_theme()
-
-def random_walk(initial = 0, prob_up = 0.5, size_up = 1, size_down = 1, T = 1, sim_num = 100, visualize = False):
-    """
-    Generates a 1D random walk
-
-    Inputs:
-    - initial: initial value of the random walk. Default is 0.
-    - prob_up: probability of going up. Default is 0.5. Probability of going down is defined as 1 - prob_up.
-    - size_up: size of the upward step. Default is 1.
-    - size_down: size of the downward step. Default is 1.
-    - T: time in years. Default is 1. To get the number of steps, multiply T by 252.
-    - sim_num: number of simulations to run. Default is 100.
-    - visualize: whether to plot the paths. Default is False.
-
-    Ouputs:
-    - paths: 2D array of paths of the simulation with dimensions (round(T * 252) + 1, sim_num).
-    - (optional) plot of the paths.
-
-    Notes:
-    - the simulation is (round(T * 252) + 1) in length to account for the initial value.
-    - to select a single path, use random_walk(...)[:, i]
-    - to select a single point in time across paths, use randomm_walk(...)[i, :]
-    """
-    increments = st.bernoulli.rvs(prob_up, size = (round(T * 252) + 1, sim_num)) * (size_up + size_down) - size_down
-    increments[0,:] = initial
-    paths = increments.cumsum(axis = 0)
-
-    if visualize == True:
-        plt.figure(figsize = (10, 6), dpi = 150)
-        plt.plot(paths)
-        plt.title('Random walk')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.show()
-
-    return paths
 
 def algebraic_brownian_motion(initial = 0, drift = 0, diffusion = 10, T = 1, sim_num = 100, visualize = False):
     """
@@ -78,88 +44,98 @@ def algebraic_brownian_motion(initial = 0, drift = 0, diffusion = 10, T = 1, sim
 
     return paths
 
-def geometric_brownian_motion(initial = 100, drift = 0.1, diffusion = 0.2, T = 1, sim_num = 100, visualize = False):
+def geometric_brownian_motion(
+    initial_vector=100,
+    drift_vector=0.1,
+    diffusion_vector=0.2,
+    correlation_matrix=np.eye(1),
+    T=1,
+    granularity=252,
+    n_paths=100,
+    visualize=False,
+    method='antithetic_variates'
+):
     """
-    Generates a 1D geometric brownian motion
+    Simulates correlated multidimensional Geometric Brownian Motion (GBM) paths.
 
-    Inputs:
-    - initial: initial value of the brownian motion. Default is 100.
-    - drift: drift coefficient (mu) in annual terms. Default is 0.1.
-    - diffusion: diffusion coefficient (sigma) in annual terms. Default is 0.2.
-    - T: time in years. Default is 1. To get the number of steps, multiply T by 252.
-    - sim_num: number of simulations to run. Default is 100.
-    - visualize: whether to plot the paths. Default is False.
+    This function generates Monte Carlo paths for a vector of assets following 
+    correlated GBM dynamics under the physical (real-world) measure:
+        dS_i(t) = mu_i * S_i(t) dt + sigma_i * S_i(t) dW_i(t),
+    where the Brownian motions W_i are correlated according to `correlation_matrix`.
 
-    Ouputs:
-    - paths: 2D array of paths of the simulation with dimensions (round(T * 252) + 1, sim_num).
-    - (optional) plot of the paths.
+    Parameters
+    ----------
+    initial_vector : array-like, shape (n_dim,) or scalar
+        Initial asset prices S(0). If scalar, broadcast to all dimensions.
+    drift_vector : array-like, shape (n_dim,) or scalar
+        Annualized drift coefficients (mu). If scalar, applied to all assets.
+    diffusion_vector : array-like, shape (n_dim,) or scalar
+        Annualized volatility coefficients (sigma). If scalar, applied to all assets.
+    correlation_matrix : array-like, shape (n_dim, n_dim)
+        Positive semi-definite correlation matrix for the underlying Brownian motions.
+        Must be symmetric with ones on the diagonal.
+    T : float
+        Time horizon in years (e.g., T=1 for 1 year).
+    granularity : int
+        Number of time steps per year (e.g., 252 for daily steps in trading calendar).
+        Total number of simulation steps: N = int(granularity * T).
+    n_paths : int
+        Number of independent Monte Carlo paths to simulate.
+    visualize : bool
+        If True, plots all simulated paths for each asset dimension.
+    method : str
+        Variance reduction method for noise generation (e.g., 'antithetic_variates').
 
-    Notes:
-    - the simulation is (round(T * 252) + 1) in length to account for the initial value.
-    - to select a single path, use geometric_brownian_motion(...)[:, i]
-    - to select a single point in time across paths, use geometric_brownian_motion(...)[i, :]
+    Returns
+    -------
+    paths : ndarray, shape (N + 1, n_paths, n_dim)
+        Simulated GBM paths. 
+        - Axis 0: time steps from t=0 to t=T (inclusive), total N+1 points.
+        - Axis 1: independent Monte Carlo paths.
+        - Axis 2: asset dimensions.
+
+    Notes
+    -----
+    - The time step size is dt = T / N, where N = int(granularity * T).
+    - Drift and diffusion parameters are interpreted in annualized terms.
+    - The first time slice (paths[0, :, :]) equals `initial_vector` for all paths.
+    - To extract the i-th path for asset j: paths[:, i, j]
+    - To extract all paths at time step k: paths[k, :, :]
+    - The current implementation forces the first increment to zero; this may cause
+      a slight bias in the effective time horizon (T_eff = (N-1)/N * T).
+
+    Examples
+    --------
+    >>> paths = geometric_brownian_motion(
+    ...     initial_vector=[100, 95],
+    ...     drift_vector=[0.05, 0.03],
+    ...     diffusion_vector=[0.2, 0.25],
+    ...     correlation_matrix=[[1, 0.5], [0.5, 1]],
+    ...     T=1.0,
+    ...     granularity=252,
+    ...     n_paths=1000
+    ... )
+    >>> print(paths.shape)  # (253, 1000, 2)
     """
 
-    increments = st.norm.rvs(loc = drift / 252, scale = diffusion / np.sqrt(252), size = (round(T * 252) + 1, sim_num))
-    increments[0, :] = np.zeros(len(increments[0, :]))
-    paths = initial * np.exp(increments.cumsum(axis = 0))
+    if (initial_vector.shape != drift_vector.shape) | (diffusion_vector.shape != drift_vector.shape):
+        raise ValueError("The inputs for drift, diffusion and initial positions have different dimensions. Check!")
+    
+    n_dim = initial_vector.shape[0]
+    N = int(granularity * T)
+    dt = T / N
 
-    if visualize == True:
-        plt.figure(figsize = (10, 6), dpi = 150)
-        plt.plot(paths)
-        plt.title('Geometric Brownian Motion')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.show()
+    increments = se.generate_uncorrelated_white_noise(N, n_paths, n_dim, method=method)
+    correlated_increments = se.correlate_noise(increments, correlation_matrix)
 
-    return paths
+    # Log-return increments: shape (N, n_paths, n_dim)
+    log_increments = (correlated_increments * diffusion_vector * jnp.sqrt(dt) + (drift_vector - 0.5 * diffusion_vector**2) * dt)
 
-def multivariate_geometric_brownian_motion(initial = np.array([100, 100]), drift = np.array([0.1, 0.1]), diffusion = np.array([[0.2, 0.05], [0.05, 0.2]]), T = 1, sim_num = 100, visualize_single_trajectory = False, visualize_single_asset = False):
-    """
-    Generates N-dimensional Geometric Brownian Motion
+    # Cumulative log returns from time 0 to T (N steps)
+    cum_log_returns = jnp.concatenate([jnp.zeros((1, n_paths, n_dim)), jnp.cumsum(log_increments, axis=0)], axis=0)
 
-    Inputs:
-    - initial: initial values of the process (spot prices)
-    - drift: array of drift coefficients (mu) in annual terms
-    - diffusion: covariance matrix (sigma) in annual terms
-    - T: time in years. The function simulates round(T * 252) + 1 steps
-    - sim_num: number of paths to generate
-    - visualize_single_trajectory: generate one path for all assets in the basket - for visual debugging only
-    - visualize_single_asset: generate all paths, but for one asset from the basket - for visual debugging only
-
-    Ouputs:
-    - paths: 3D array of paths of the simulation with dimensions (round(T * 252) + 1, sim_num, n_assets)
-    - (optional) plot of the paths
-
-    Notes:
-    - the simulation is round(T * 252) + 1 in length to account for initial value
-    - always check that initial values array, drift array and covariance matrix have the same dimensions!
-    - use paths[i, :, :] to choose one time
-    - use paths[:, i, :] to choose one path
-    - use paths[:, :, i] to choose one asset
-    """
-
-    n_assets = len(drift)
-
-    increments = st.multivariate_normal.rvs(mean = drift / 252, cov = diffusion / np.sqrt(252), size = (round(T * 252) + 1, sim_num))
-    increments[0, :, :] = np.zeros([sim_num, n_assets])
-    paths = initial * np.exp(increments.cumsum(axis = 0))
-
-    if visualize_single_trajectory == True:
-        plt.figure(figsize = (10, 6), dpi = 150)
-        plt.plot(paths[:, 0, :])
-        plt.title('All assets in the first generated path')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.show()
-
-    if visualize_single_trajectory == True:
-        plt.figure(figsize = (10, 6), dpi = 150)
-        plt.plot(paths[:, :, 0])
-        plt.title('All paths for the first asset')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.show()
+    # Final paths: S(t) = S0 * exp(cum_log_return)
+    paths = initial_vector * jnp.exp(cum_log_returns)
 
     return paths
 
