@@ -1,149 +1,152 @@
 import numpy as np
-from scipy.integrate import quad
-from scipy.stats import norm
 
-def heston_char_func(u, tau, S0, r, q, v0, kappa, theta, sigma, rho, j=2):
+
+def heston_cf(u, T, r, q, kappa, theta, sigma, rho, v0, s0):
     """
-    Heston characteristic function - Little Heston Trap formulation (Albrecher et al. 2007)
-    
-    Parameters:
-    -----------
-    j : int (1 or 2)
-        j=1 for P1, j=2 for P2
+    Risk-neutral characteristic function of log(S_T) under Heston.
+    u can be scalar or numpy array.
     """
+    u = np.asarray(u, dtype=np.complex128)
+    x0 = np.log(s0)
     i = 1j
-    
-    # Parameters that differ for P1 and P2
-    u1 = 0.5
-    u2 = -0.5
-    uj = u1 if j == 1 else u2
-    
-    # Coefficients
-    a = kappa * theta
-    b = kappa  # Zero volatility risk premium
-    
-    # Calculate d and g carefully
-    delta = b - rho * sigma * u * i
-    discriminant = delta**2 - sigma**2 * (2 * uj * u * i - u**2)
-    
-    # Use principal square root
-    d = np.sqrt(discriminant + 0j)  # Ensure complex
-    
-    # Avoid division by zero
-    if np.abs(d) < 1e-10:
-        d = 1e-10 + 0j
-    
-    # Calculate g
-    g = (delta - d) / (delta + d)
-    
-    # Calculate D term
-    exp_term = np.exp(-d * tau)
-    D = (delta - d) / sigma**2 * (1 - exp_term) / (1 - g * exp_term)
-    
-    # Calculate C term - use log1p for better numerical stability when g*exp_term is close to 1
-    log_arg = (1 - g * exp_term) / (1 - g)
-    
-    # Handle numerical issues with log
-    if np.abs(log_arg) < 1e-10:
-        log_val = np.log(1e-10)
-    else:
-        log_val = np.log(log_arg + 0j)
-    
-    C = (r - q) * u * i * tau + (a / sigma**2) * (
-        (delta - d) * tau - 2 * log_val
+
+    d = np.sqrt((rho * sigma * i * u - kappa)**2 + sigma**2 * (i * u + u**2))
+    g = (kappa - rho * sigma * i * u - d) / (kappa - rho * sigma * i * u + d)
+
+    exp_neg_dT = np.exp(-d * T)
+
+    C = (
+        (r - q) * i * u * T
+        + (kappa * theta / sigma**2)
+        * ((kappa - rho * sigma * i * u - d) * T
+           - 2.0 * np.log((1.0 - g * exp_neg_dT) / (1.0 - g)))
     )
-    
-    # Final characteristic function
-    cf = np.exp(C + D * v0 + i * u * np.log(S0))
-    
-    # Check for numerical issues
-    if np.isnan(cf) or np.isinf(cf):
-        return 0.0 + 0j
-    
-    return cf
+
+    D = ((kappa - rho * sigma * i * u - d) / sigma**2) * (
+        (1.0 - exp_neg_dT) / (1.0 - g * exp_neg_dT)
+    )
+
+    return np.exp(C + D * v0 + i * u * x0)
 
 
-def heston_call_price(S0, K, T, r, q, v0, kappa, theta, sigma, rho, 
-                      integration_limit=100.0):
+def _chi_psi(a, b, c, d, k):
     """
-    Heston call option price using Gil-Pelaez inversion
+    COS auxiliary coefficients on interval [c, d] within truncation [a, b].
+    k is an array of indices.
     """
-    tau = T
-    
-    def integrand_P2(u):
-        """Integrand for P2"""
-        if u < 1e-10:
-            return 0.0
-        cf = heston_char_func(u, tau, S0, r, q, v0, kappa, theta, sigma, rho, j=2)
-        result = np.real(np.exp(-1j * u * np.log(K)) * cf / (1j * u))
-        return result if not (np.isnan(result) or np.isinf(result)) else 0.0
-    
-    def integrand_P1(u):
-        """Integrand for P1"""
-        if u < 1e-10:
-            return 0.0
-        cf = heston_char_func(u, tau, S0, r, q, v0, kappa, theta, sigma, rho, j=1)
-        result = np.real(np.exp(-1j * u * np.log(K)) * cf / (1j * u))
-        return result if not (np.isnan(result) or np.isinf(result)) else 0.0
-    
-    # Integrate with error handling
-    try:
-        P2_integral, _ = quad(integrand_P2, 1e-8, integration_limit, 
-                              limit=200, epsabs=1e-6, epsrel=1e-6)
-        P1_integral, _ = quad(integrand_P1, 1e-8, integration_limit, 
-                              limit=200, epsabs=1e-6, epsrel=1e-6)
-    except:
-        print("Integration failed - returning NaN")
-        return np.nan
-    
-    P2 = 0.5 + P2_integral / np.pi
-    P1 = 0.5 + P1_integral / np.pi
-    
-    # Ensure probabilities are in valid range
-    P1 = np.clip(P1, 0, 1)
-    P2 = np.clip(P2, 0, 1)
-    
-    # Call price formula
-    call_price = np.exp(-q * tau) * S0 * P1 - np.exp(-r * tau) * K * P2
-    
-    return call_price
+    k = np.asarray(k, dtype=np.float64)
+    omega = k * np.pi / (b - a)
+
+    exp_c = np.exp(c)
+    exp_d = np.exp(d)
+
+    cos_term_d = np.cos(omega * (d - a))
+    cos_term_c = np.cos(omega * (c - a))
+    sin_term_d = np.sin(omega * (d - a))
+    sin_term_c = np.sin(omega * (c - a))
+
+    denom = 1.0 + omega**2
+
+    chi = (
+        (cos_term_d * exp_d - cos_term_c * exp_c)
+        + omega * (sin_term_d * exp_d - sin_term_c * exp_c)
+    ) / denom
+
+    psi = np.zeros_like(k)
+    psi[0] = d - c
+    psi[1:] = (sin_term_d[1:] - sin_term_c[1:]) * (b - a) / (k[1:] * np.pi)
+
+    return chi, psi
 
 
-# Test the implementation
-if __name__ == "__main__":
-    # Parameters - start with simple case
-    S0 = 100.0
-    K = 100.0
-    T = 1.0
-    r = 0.05
-    q = 0.0
-    v0 = 0.04
-    kappa = 2.0
-    theta = 0.04
-    sigma = 0.3
-    rho = -0.7
-    
-    print("Testing Heston pricer...")
-    print(f"Parameters: S0={S0}, K={K}, T={T}, r={r}, q={q}")
-    print(f"v0={v0}, kappa={kappa}, theta={theta}, sigma={sigma}, rho={rho}")
-    print()
-    
-    # Test with sigma -> 0 (should converge to BS)
-    print("Test 1: sigma=0.001 (should be close to BS with vol=0.2)")
-    heston_price = heston_call_price(S0, K, T, r, q, v0, kappa, theta, 
-                                     sigma=0.001, rho=0.0)
-    
-    # Black-Scholes price
-    d1 = (np.log(S0/K) + (r - q + 0.5*0.2**2)*T) / (0.2*np.sqrt(T))
-    d2 = d1 - 0.2*np.sqrt(T)
-    bs_price = np.exp(-q*T)*S0*norm.cdf(d1) - np.exp(-r*T)*K*norm.cdf(d2)
-    
-    print(f"Heston Price: {heston_price:.6f}")
-    print(f"BS Price: {bs_price:.6f}")
-    print(f"Difference: {abs(heston_price - bs_price):.6f}")
-    print()
-    
-    # Test with full parameters
-    print("Test 2: Full Heston parameters (sigma=0.3)")
-    heston_price_full = heston_call_price(S0, K, T, r, q, v0, kappa, theta, sigma, rho)
-    print(f"Heston Price: {heston_price_full:.6f}")
+def cos_put_coefficients(a, b, K, N):
+    """
+    COS payoff coefficients for put payoff (K - exp(x))^+.
+    Assumes x = log(S_T), exercise region x < log(K).
+    """
+    k = np.arange(N, dtype=np.float64)
+    c = a
+    d = np.log(K)
+
+    chi, psi = _chi_psi(a, b, c, d, k)
+    Vk = 2.0 / (b - a) * (K * psi - chi)
+    return Vk
+
+
+def heston_cos_price_put(
+    s0, K, T, r, q,
+    kappa, theta, sigma, rho, v0,
+    N=256, L=12.0
+):
+    """
+    European put via COS under Heston.
+    """
+    # Simple truncation interval around log-forward
+    c1 = np.log(s0) + (r - q) * T
+    a = c1 - L * np.sqrt(T + np.sqrt(v0 * T + theta * T))
+    b = c1 + L * np.sqrt(T + np.sqrt(v0 * T + theta * T))
+
+    k = np.arange(N, dtype=np.float64)
+    u = k * np.pi / (b - a)
+
+    cf_vals = heston_cf(u, T, r, q, kappa, theta, sigma, rho, v0, s0)
+    Vk = cos_put_coefficients(a, b, K, N)
+
+    weights = np.ones(N)
+    weights[0] = 0.5
+
+    price = np.exp(-r * T) * np.sum(
+        weights * np.real(cf_vals * np.exp(-1j * u * a)) * Vk
+    )
+    return np.real(price)
+
+
+def heston_cos_price_call(
+    s0, K, T, r, q,
+    kappa, theta, sigma, rho, v0,
+    N=256, L=12.0
+):
+    """
+    European call via put-call parity for stability.
+    """
+    put = heston_cos_price_put(
+        s0, K, T, r, q, kappa, theta, sigma, rho, v0, N=N, L=L
+    )
+    forward_discounted = s0 * np.exp(-q * T) - K * np.exp(-r * T)
+    return put + forward_discounted
+
+def heston_price(
+    s0, K, T, r, q,
+    kappa, theta, sigma, rho, v0, call_put = "Call",
+    N=256, L=12.0
+):
+    if call_put == "Call":
+        heston_cos_price_call(s0, K, T, r, q, kappa, theta, sigma, rho, v0, N, L)
+    else:
+        heston_cos_price_put(s0, K, T, r, q, kappa, theta, sigma, rho, v0, N, L)
+
+def heston_cos_price_surface(
+    s0, strikes, maturities, r, q,
+    kappa, theta, sigma, rho, v0,
+    cp="call", N=256, L=12.0
+):
+    """
+    Price a matrix of strikes x maturities.
+    Returns array shape (len(maturities), len(strikes)).
+    """
+    strikes = np.asarray(strikes, dtype=np.float64)
+    maturities = np.asarray(maturities, dtype=np.float64)
+
+    out = np.zeros((len(maturities), len(strikes)))
+
+    for i, T in enumerate(maturities):
+        for j, K in enumerate(strikes):
+            if cp == "Call":
+                out[i, j] = heston_cos_price_call(
+                    s0, K, T, r, q, kappa, theta, sigma, rho, v0, N=N, L=L
+                )
+            else:
+                out[i, j] = heston_cos_price_put(
+                    s0, K, T, r, q, kappa, theta, sigma, rho, v0, N=N, L=L
+                )
+    return out
